@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
+import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from '@/components/ui/command';
 import {
   LayoutDashboard,
   Target,
@@ -46,6 +47,9 @@ import {
   Droplet,
   Activity,
   Smile,
+  ClipboardList,
+  Search,
+  Command as CommandIcon,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -96,13 +100,14 @@ function statusBadge(s) {
   return map[s] || map['In Progress'];
 }
 
-function Sidebar({ view, setView }) {
+function Sidebar({ view, setView, onOpenPalette }) {
   const items = [
     { id: 'dashboard', label: 'Executive Dashboard', icon: LayoutDashboard },
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'habits', label: 'Habits', icon: Repeat },
     { id: 'finance', label: 'Finance', icon: Wallet },
     { id: 'health', label: 'Health', icon: Heart },
+    { id: 'reviews', label: 'Reviews', icon: ClipboardList },
     { id: 'coach', label: 'AI Coach', icon: Sparkles },
   ];
   return (
@@ -115,6 +120,16 @@ function Sidebar({ view, setView }) {
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Executive Suite</div>
           </div>
         </div>
+      </div>
+      <div className="px-3 pt-3">
+        <button
+          onClick={onOpenPalette}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-xs text-muted-foreground bg-white/5 hover:bg-white/10 border border-border/40 transition"
+        >
+          <Search className="h-3.5 w-3.5" />
+          <span>Quick jump…</span>
+          <kbd className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-border/40 font-mono">⌘K</kbd>
+        </button>
       </div>
       <nav className="flex-1 px-3 py-4 space-y-1">
         {items.map((it) => {
@@ -137,7 +152,7 @@ function Sidebar({ view, setView }) {
         })}
       </nav>
       <div className="px-6 py-4 border-t border-border/60 text-[10px] text-muted-foreground uppercase tracking-widest">
-        Phase 1 · MVP
+        Phase 2 · Live
       </div>
     </aside>
   );
@@ -1022,6 +1037,215 @@ function HealthView({ dashboard, onRefresh }) {
   );
 }
 
+function ReviewsView({ onRefresh }) {
+  const [reviews, setReviews] = useState([]);
+  const [draft, setDraft] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    const list = await fetch('/api/reviews').then((r) => r.json());
+    setReviews(list);
+  };
+  useEffect(() => { load(); }, []);
+
+  const generate = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/reviews/generate', { method: 'POST' });
+      if (res.ok) {
+        const r = await res.json();
+        setDraft(r);
+        toast.success('AI draft ready — edit and save');
+      }
+    } finally { setLoading(false); }
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    setSaving(true);
+    const res = await fetch('/api/reviews', { method: 'POST', body: JSON.stringify(draft) });
+    setSaving(false);
+    if (res.ok) {
+      toast.success('Review saved');
+      setDraft(null);
+      await load();
+      onRefresh?.();
+    }
+  };
+
+  const updateArray = (key, idx, value) => {
+    setDraft((d) => {
+      const arr = [...(d[key] || [])];
+      arr[idx] = value;
+      return { ...d, [key]: arr };
+    });
+  };
+  const addArrayItem = (key) => setDraft((d) => ({ ...d, [key]: [...(d[key] || []), ''] }));
+  const removeArrayItem = (key, idx) => setDraft((d) => ({ ...d, [key]: (d[key] || []).filter((_, i) => i !== idx) }));
+
+  const arrEditor = (label, key, placeholder) => (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">{label}</Label>
+        <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => addArrayItem(key)}><Plus className="h-3 w-3 mr-1" />Add</Button>
+      </div>
+      <div className="space-y-1.5">
+        {(draft?.[key] || []).map((v, i) => (
+          <div key={i} className="flex gap-2">
+            <Input value={v} placeholder={placeholder} onChange={(e) => updateArray(key, i, e.target.value)} />
+            <Button size="icon" variant="ghost" className="h-9 w-9 shrink-0 text-muted-foreground hover:text-rose-400" onClick={() => removeArrayItem(key, i)}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Weekly Reviews</div>
+          <div className="text-2xl font-semibold">Reflect, learn, redirect</div>
+        </div>
+        <Button onClick={generate} disabled={loading}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          <span className="ml-2">AI Draft This Week</span>
+        </Button>
+      </div>
+
+      {draft && (
+        <Card className="p-6 border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-transparent">
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+            <div>
+              <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Draft · {draft.week_start} → {draft.week_end}</div>
+              <div className="text-lg font-semibold">Weekly Review</div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Score</div>
+                <div className={`text-2xl font-bold tabular-nums ${scoreColor(draft.score || 0)}`}>{draft.score}</div>
+              </div>
+              <Button onClick={save} disabled={saving}>
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                <span className="ml-2">Save review</span>
+              </Button>
+            </div>
+          </div>
+          <div className="grid lg:grid-cols-2 gap-6">
+            {arrEditor('Wins', 'wins', 'What you shipped')}
+            {arrEditor('Failures', 'failures', 'What slipped')}
+            {arrEditor('Lessons', 'lessons', 'Key learning')}
+            {arrEditor('Next-Week Focus', 'next_week_focus', 'Priority for next week')}
+          </div>
+          <div className="mt-4 space-y-1.5">
+            <Label className="text-[11px] uppercase tracking-widest text-muted-foreground">Narrative</Label>
+            <Textarea rows={3} value={draft.narrative || ''} onChange={(e) => setDraft({ ...draft, narrative: e.target.value })} />
+          </div>
+        </Card>
+      )}
+
+      <div className="space-y-3">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground">History · {reviews.length} reviews</div>
+        {reviews.length === 0 && !draft && (
+          <Card className="p-10 text-center text-sm text-muted-foreground border-border/60">
+            No reviews yet. Click "AI Draft This Week" to generate your first review.
+          </Card>
+        )}
+        {reviews.map((r) => (
+          <Card key={r.id} className="p-5 border-border/60">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <div className="text-sm font-medium">{r.week_start} → {r.week_end}</div>
+                <div className="text-[11px] text-muted-foreground">Saved {new Date(r.createdAt).toLocaleDateString()}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Score</div>
+                <div className={`text-lg font-semibold tabular-nums ${scoreColor(r.score || 0)}`}>{r.score}</div>
+              </div>
+            </div>
+            {r.narrative && <p className="text-sm text-muted-foreground mb-3">{r.narrative}</p>}
+            <div className="grid md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-emerald-400 mb-1">Wins</div>
+                <ul className="space-y-1 list-disc list-inside marker:text-muted-foreground">{(r.wins || []).map((w, i) => <li key={i}>{w}</li>)}</ul>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-rose-400 mb-1">Failures</div>
+                <ul className="space-y-1 list-disc list-inside marker:text-muted-foreground">{(r.failures || []).map((w, i) => <li key={i}>{w}</li>)}</ul>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-amber-400 mb-1">Lessons</div>
+                <ul className="space-y-1 list-disc list-inside marker:text-muted-foreground">{(r.lessons || []).map((w, i) => <li key={i}>{w}</li>)}</ul>
+              </div>
+              <div>
+                <div className="text-[10px] uppercase tracking-widest text-sky-400 mb-1">Next Week</div>
+                <ul className="space-y-1 list-disc list-inside marker:text-muted-foreground">{(r.next_week_focus || []).map((w, i) => <li key={i}>{w}</li>)}</ul>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LifePalette({ open, setOpen, setView, goals, habits, onQuickAction }) {
+  const [q, setQ] = useState('');
+  const nav = (v) => { setView(v); setOpen(false); };
+
+  return (
+    <CommandDialog open={open} onOpenChange={setOpen}>
+      <CommandInput placeholder="Jump to view, log a habit, bump a goal, or add a transaction…" value={q} onValueChange={setQ} />
+      <CommandList>
+        <CommandEmpty>No results.</CommandEmpty>
+        <CommandGroup heading="Navigate">
+          <CommandItem onSelect={() => nav('dashboard')}><LayoutDashboard className="mr-2 h-4 w-4" />Executive Dashboard</CommandItem>
+          <CommandItem onSelect={() => nav('goals')}><Target className="mr-2 h-4 w-4" />Goals</CommandItem>
+          <CommandItem onSelect={() => nav('habits')}><Repeat className="mr-2 h-4 w-4" />Habits</CommandItem>
+          <CommandItem onSelect={() => nav('finance')}><Wallet className="mr-2 h-4 w-4" />Finance</CommandItem>
+          <CommandItem onSelect={() => nav('health')}><Heart className="mr-2 h-4 w-4" />Health</CommandItem>
+          <CommandItem onSelect={() => nav('reviews')}><ClipboardList className="mr-2 h-4 w-4" />Reviews</CommandItem>
+          <CommandItem onSelect={() => nav('coach')}><Sparkles className="mr-2 h-4 w-4" />AI Coach</CommandItem>
+        </CommandGroup>
+        <CommandSeparator />
+        <CommandGroup heading="Actions">
+          <CommandItem onSelect={() => { onQuickAction('brief'); setOpen(false); }}><Sparkles className="mr-2 h-4 w-4" />Generate Morning Brief</CommandItem>
+          <CommandItem onSelect={() => { onQuickAction('weekly'); setOpen(false); setView('reviews'); }}><ClipboardList className="mr-2 h-4 w-4" />Generate Weekly Review</CommandItem>
+        </CommandGroup>
+        {habits.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Log habit (mark done today)">
+              {habits.map((h) => (
+                <CommandItem key={h.id} onSelect={() => { onQuickAction('logHabit', h); setOpen(false); }}>
+                  <Repeat className="mr-2 h-4 w-4" />{h.title}
+                  <span className="ml-auto text-[10px] text-muted-foreground">{h.streak}d streak</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+        {goals.length > 0 && (
+          <>
+            <CommandSeparator />
+            <CommandGroup heading="Bump goal (+5%)">
+              {goals.map((g) => (
+                <CommandItem key={g.id} onSelect={() => { onQuickAction('bumpGoal', g); setOpen(false); }}>
+                  <Target className="mr-2 h-4 w-4" />{g.title}
+                  <span className="ml-auto text-[10px] text-muted-foreground">{g.progress}%</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </>
+        )}
+      </CommandList>
+    </CommandDialog>
+  );
+}
+
 function App() {
   const [view, setView] = useState('dashboard');
   const [dashboard, setDashboard] = useState(null);
@@ -1029,6 +1253,7 @@ function App() {
   const [habits, setHabits] = useState([]);
   const [brief, setBrief] = useState(null);
   const [briefLoading, setBriefLoading] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   const refreshAll = async () => {
     const [dRes, gRes, hRes] = await Promise.all([
@@ -1049,20 +1274,48 @@ function App() {
     } finally { setBriefLoading(false); }
   };
 
+  const handleQuickAction = async (action, item) => {
+    if (action === 'brief') { await refreshBrief(); toast.success('Brief ready'); }
+    else if (action === 'weekly') {
+      const res = await fetch('/api/reviews/generate', { method: 'POST' });
+      if (res.ok) toast.success('Weekly draft ready on Reviews page');
+    }
+    else if (action === 'logHabit' && item) {
+      const val = item.unit === 'yes/no' ? 1 : item.target;
+      const res = await fetch('/api/habit-logs', { method: 'POST', body: JSON.stringify({ habitId: item.id, actual: val, target: item.target }) });
+      if (res.ok) { toast.success(`${item.title} logged`); await refreshAll(); }
+    }
+    else if (action === 'bumpGoal' && item) {
+      const res = await fetch(`/api/goals/${item.id}`, { method: 'PATCH', body: JSON.stringify({ progress: Math.min(100, (item.progress || 0) + 5) }) });
+      if (res.ok) { toast.success(`+5% on ${item.title}`); await refreshAll(); }
+    }
+  };
+
   useEffect(() => {
     (async () => {
       await fetch('/api/seed');
       await refreshAll();
-      // auto-load today's brief in background
       refreshBrief();
     })();
+  }, []);
+
+  // Global ⌘K / Ctrl+K handler
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, []);
 
   const today = useMemo(() => new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }), []);
 
   return (
     <div className="min-h-screen flex">
-      <Sidebar view={view} setView={setView} />
+      <Sidebar view={view} setView={setView} onOpenPalette={() => setPaletteOpen(true)} />
       <main className="flex-1 min-w-0 pb-24 lg:pb-8">
         {/* Top bar */}
         <div className="border-b border-border/60 bg-background/60 backdrop-blur sticky top-0 z-30">
@@ -1075,13 +1328,21 @@ function App() {
                 {view === 'habits' && 'Habit Tracker'}
                 {view === 'finance' && 'Finance'}
                 {view === 'health' && 'Health & Energy'}
+                {view === 'reviews' && 'Weekly Reviews'}
                 {view === 'coach' && 'AI Coach'}
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={refreshBrief} disabled={briefLoading}>
-              {briefLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              <span className="ml-1.5">Morning Brief</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPaletteOpen(true)} className="hidden sm:inline-flex">
+                <Search className="h-3.5 w-3.5" />
+                <span className="ml-1.5">Search</span>
+                <kbd className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-white/10 border border-border/40 font-mono">⌘K</kbd>
+              </Button>
+              <Button variant="outline" size="sm" onClick={refreshBrief} disabled={briefLoading}>
+                {briefLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                <span className="ml-1.5">Morning Brief</span>
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -1091,10 +1352,19 @@ function App() {
           {view === 'habits' && <HabitsView habits={habits} onRefresh={refreshAll} />}
           {view === 'finance' && <FinanceView dashboard={dashboard} onRefresh={refreshAll} />}
           {view === 'health' && <HealthView dashboard={dashboard} onRefresh={refreshAll} />}
+          {view === 'reviews' && <ReviewsView onRefresh={refreshAll} />}
           {view === 'coach' && <CoachView brief={brief} loading={briefLoading} onRefresh={refreshBrief} />}
         </div>
       </main>
       <MobileNav view={view} setView={setView} />
+      <LifePalette
+        open={paletteOpen}
+        setOpen={setPaletteOpen}
+        setView={setView}
+        goals={goals}
+        habits={habits}
+        onQuickAction={handleQuickAction}
+      />
     </div>
   );
 }

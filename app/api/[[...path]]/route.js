@@ -317,6 +317,48 @@ async function seedIfEmpty() {
   return { seeded: true, goals: goals.length, habits: habits.length, transactions: txns.length, healthLogs: healthLogs.length };
 }
 
+// ---------- Shared LLM caller ----------
+async function callClaude(systemPrompt, userPrompt, maxTokens = 900) {
+  const key = process.env.EMERGENT_LLM_KEY;
+  const endpoints = [
+    'https://integrations.emergentagent.com/llm/chat/completions',
+    'https://llm.emergentagent.com/v1/chat/completions',
+  ];
+  for (const url of endpoints) {
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-5-20250929',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          max_tokens: maxTokens,
+          temperature: 0.4,
+        }),
+      });
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const text = data?.choices?.[0]?.message?.content || '';
+      return text;
+    } catch (e) {}
+  }
+  return null;
+}
+
+function extractJSON(text) {
+  if (!text) return null;
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
 // ---------- AI Brief ----------
 async function generateBrief() {
   const dashboard = await computeDashboard();
@@ -411,6 +453,91 @@ Rules: be specific, reference names from the data, no filler, no emojis, no mark
   };
 }
 
+// ---------- Weekly Review Generator ----------
+async function generateWeeklyReview() {
+  const database = await getDb();
+  const dashboard = await computeDashboard();
+
+  // Gather last 7 days context
+  const habits = await database.collection('habits').find({}).toArray();
+  const habitLogs = await database.collection('habit_logs').find({}).toArray();
+  const goals = await database.collection('goals').find({}).toArray();
+  const txns = await database.collection('transactions').find({}).toArray();
+  const healthLogs = await database.collection('health_logs').find({}).sort({ date: 1 }).toArray();
+
+  const last7 = Array.from({ length: 7 }, (_, i) => todayStr(-i));
+  const weekStart = last7[6];
+  const weekEnd = last7[0];
+
+  const habitSummary = habits.map((h) => {
+    const week = last7.map((d) => {
+      const l = habitLogs.find((x) => x.habitId === h.id && x.date === d);
+      return l ? Math.min(100, ((l.actual || 0) / Math.max(h.target || 1, 1)) * 100) : 0;
+    });
+    const avg = Math.round(week.reduce((a, b) => a + b, 0) / 7);
+    return { habit: h.title, category: h.category, weekly_pct: avg };
+  });
+
+  const financeWeek = txns.filter((t) => t.date >= weekStart && t.date <= weekEnd);
+  const incomeWk = financeWeek.filter((t) => t.type === 'Income').reduce((s, t) => s + Number(t.amount || 0), 0);
+  const expenseWk = financeWeek.filter((t) => t.type === 'Expense').reduce((s, t) => s + Number(t.amount || 0), 0);
+  const savingsWk = financeWeek.filter((t) => t.type === 'Savings' || t.type === 'Investment').reduce((s, t) => s + Number(t.amount || 0), 0);
+
+  const healthWeek = healthLogs.filter((r) => r.date >= weekStart && r.date <= weekEnd);
+  const avgSleep = healthWeek.length ? healthWeek.reduce((s, r) => s + Number(r.sleep || 0), 0) / healthWeek.length : null;
+  const avgMood = healthWeek.length ? healthWeek.reduce((s, r) => s + Number(r.mood || 0), 0) / healthWeek.length : null;
+
+  const context = {
+    period: { start: weekStart, end: weekEnd },
+    lifeScore: dashboard.lifeScore,
+    components: dashboard.components,
+    habits_this_week: habitSummary,
+    weakest_habit: dashboard.weakestHabit,
+    goals_status: goals.map((g) => ({
+      title: g.title,
+      category: g.category,
+      priority: g.priority,
+      progress: g.progress,
+      expected: g.expectedProgress,
+      status: g.status,
+    })),
+    finance_this_week: { income: incomeWk, expense: expenseWk, savings_and_invest: savingsWk },
+    health_this_week: { avg_sleep_hrs: avgSleep, avg_mood_1to5: avgMood, days_logged: healthWeek.length },
+  };
+
+  const systemPrompt = 'You are an executive performance coach conducting a rigorous weekly review. Be direct, specific, and reference actual numbers and names from the data. Return only valid JSON.';
+  const userPrompt = `Conduct a weekly review for the period ${weekStart} to ${weekEnd} using the data below.\n\nDATA:\n${JSON.stringify(context, null, 2)}\n\nReturn JSON exactly like this:\n{\n  "week_start": "${weekStart}",\n  "week_end": "${weekEnd}",\n  "score": 0-100 integer overall week score,\n  "wins": ["3-5 specific wins with names/numbers"],\n  "failures": ["3-5 specific failures or misses"],\n  "lessons": ["2-4 concrete lessons learned"],\n  "next_week_focus": ["3 concrete priorities for next week, ranked by impact"],\n  "narrative": "one paragraph executive narrative"\n}`;
+
+  const text = await callClaude(systemPrompt, userPrompt, 1200);
+  const parsed = extractJSON(text);
+  if (parsed) {
+    parsed._model = 'claude-sonnet-4-5';
+    parsed._generatedAt = new Date().toISOString();
+    return parsed;
+  }
+
+  // Fallback
+  const bestHabit = [...habitSummary].sort((a, b) => b.weekly_pct - a.weekly_pct)[0];
+  const worstHabit = [...habitSummary].sort((a, b) => a.weekly_pct - b.weekly_pct)[0];
+  return {
+    week_start: weekStart,
+    week_end: weekEnd,
+    score: dashboard.lifeScore,
+    wins: [
+      bestHabit ? `${bestHabit.habit} sustained at ${bestHabit.weekly_pct}% consistency` : 'Logged consistently',
+      `Life Score held at ${dashboard.lifeScore}/100`,
+    ],
+    failures: [
+      worstHabit ? `${worstHabit.habit} slipped to ${worstHabit.weekly_pct}%` : 'Some habits missed',
+    ],
+    lessons: ['Consistency compounds. Small daily execution beats sporadic effort.'],
+    next_week_focus: dashboard.decisions.slice(0, 3).map((d) => `${d.type}: ${d.item}`),
+    narrative: `This week closed at Life Score ${dashboard.lifeScore}. Focus next week on the top-priority items to compound gains.`,
+    _model: 'fallback-heuristic',
+    _generatedAt: new Date().toISOString(),
+  };
+}
+
 // ---------- Router ----------
 function pathOf(req) {
   const url = new URL(req.url);
@@ -497,6 +624,10 @@ export async function GET(req) {
       await database.collection('health_logs').deleteMany({});
       const r = await seedIfEmpty();
       return NextResponse.json(r);
+    }
+    if (root === 'reviews') {
+      const list = await database.collection('reviews').find({}).sort({ week_start: -1 }).toArray();
+      return NextResponse.json(list.map(clean));
     }
 
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -604,6 +735,31 @@ export async function POST(req) {
       }
       await database.collection('health_logs').insertOne({ id: uuidv4(), date, ...payload });
       return NextResponse.json({ ok: true, created: true });
+    }
+    if (root === 'reviews' && segs[1] === 'generate') {
+      const review = await generateWeeklyReview();
+      return NextResponse.json(review);
+    }
+    if (root === 'reviews') {
+      const doc = {
+        id: uuidv4(),
+        week_start: body.week_start,
+        week_end: body.week_end,
+        score: Number(body.score || 0),
+        wins: body.wins || [],
+        failures: body.failures || [],
+        lessons: body.lessons || [],
+        next_week_focus: body.next_week_focus || [],
+        narrative: body.narrative || '',
+        createdAt: new Date().toISOString(),
+      };
+      // Upsert by week_start
+      await database.collection('reviews').replaceOne(
+        { week_start: doc.week_start },
+        doc,
+        { upsert: true }
+      );
+      return NextResponse.json(clean(doc));
     }
 
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
