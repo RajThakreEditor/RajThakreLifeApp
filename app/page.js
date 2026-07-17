@@ -40,6 +40,12 @@ import {
   Loader2,
   RefreshCw,
   Trash2,
+  Wallet,
+  Heart,
+  Moon,
+  Droplet,
+  Activity,
+  Smile,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -49,6 +55,11 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  Legend,
 } from 'recharts';
 
 const CATEGORIES = ['Career', 'Finance', 'Health', 'Learning', 'Relationships', 'Projects', 'Focus'];
@@ -90,6 +101,8 @@ function Sidebar({ view, setView }) {
     { id: 'dashboard', label: 'Executive Dashboard', icon: LayoutDashboard },
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'habits', label: 'Habits', icon: Repeat },
+    { id: 'finance', label: 'Finance', icon: Wallet },
+    { id: 'health', label: 'Health', icon: Heart },
     { id: 'coach', label: 'AI Coach', icon: Sparkles },
   ];
   return (
@@ -135,11 +148,13 @@ function MobileNav({ view, setView }) {
     { id: 'dashboard', label: 'Home', icon: LayoutDashboard },
     { id: 'goals', label: 'Goals', icon: Target },
     { id: 'habits', label: 'Habits', icon: Repeat },
+    { id: 'finance', label: 'Money', icon: Wallet },
+    { id: 'health', label: 'Health', icon: Heart },
     { id: 'coach', label: 'Coach', icon: Sparkles },
   ];
   return (
     <div className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-border/60 bg-card/95 backdrop-blur">
-      <div className="grid grid-cols-4">
+      <div className="grid grid-cols-6">
         {items.map((it) => {
           const Icon = it.icon;
           const active = view === it.id;
@@ -737,6 +752,276 @@ function CoachView({ brief, loading, onRefresh }) {
   );
 }
 
+function FinanceView({ dashboard, onRefresh }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ date: new Date().toISOString().slice(0, 10), type: 'Expense', category: 'Food', amount: '', notes: '' });
+  const [txns, setTxns] = useState([]);
+
+  useEffect(() => {
+    fetch('/api/transactions').then((r) => r.json()).then(setTxns);
+  }, []);
+
+  const finance = dashboard?.finance;
+  if (!finance) return <div className="text-muted-foreground">Loading finance…</div>;
+
+  const submit = async () => {
+    if (!form.amount) return toast.error('Amount required');
+    const res = await fetch('/api/transactions', { method: 'POST', body: JSON.stringify(form) });
+    if (res.ok) {
+      toast.success('Transaction saved');
+      setOpen(false);
+      setForm({ ...form, amount: '', notes: '' });
+      const updated = await fetch('/api/transactions').then((r) => r.json());
+      setTxns(updated);
+      onRefresh();
+    }
+  };
+
+  const money = (n) => `$${Math.round(n).toLocaleString()}`;
+  const cur = finance.current || {};
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Finance</div>
+          <div className="text-2xl font-semibold">Cash flow & wealth</div>
+        </div>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild><Button size="sm"><Plus className="h-3.5 w-3.5 mr-1" />New Transaction</Button></DialogTrigger>
+          <DialogContent className="max-w-md">
+            <DialogHeader><DialogTitle>Log Transaction</DialogTitle></DialogHeader>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Date</Label>
+                  <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Type</Label>
+                  <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Income">Income</SelectItem>
+                      <SelectItem value="Expense">Expense</SelectItem>
+                      <SelectItem value="Savings">Savings</SelectItem>
+                      <SelectItem value="Investment">Investment</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Category</Label>
+                  <Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Amount</Label>
+                  <Input type="number" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0.00" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Notes</Label>
+                <Input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
+              </div>
+            </div>
+            <DialogFooter><Button onClick={submit}>Save</Button></DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {/* KPI row */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <Card className="p-4 border-border/60">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Income (mo)</div>
+          <div className="text-2xl font-semibold tabular-nums text-emerald-400 mt-1">{money(cur.income || 0)}</div>
+        </Card>
+        <Card className="p-4 border-border/60">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Expenses (mo)</div>
+          <div className="text-2xl font-semibold tabular-nums text-rose-400 mt-1">{money(cur.expense || 0)}</div>
+        </Card>
+        <Card className="p-4 border-border/60">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Savings Rate</div>
+          <div className={`text-2xl font-semibold tabular-nums mt-1 ${scoreColor((cur.savingsRate || 0) * 3.33)}`}>{cur.savingsRate || 0}%</div>
+        </Card>
+        <Card className="p-4 border-border/60">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Net Worth Proxy</div>
+          <div className="text-2xl font-semibold tabular-nums text-sky-400 mt-1">{money(finance.netWorthProxy || 0)}</div>
+        </Card>
+      </div>
+
+      {/* Chart */}
+      <Card className="p-6 border-border/60">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-muted-foreground">6-Month Trend</div>
+            <div className="text-lg font-semibold">Income vs Expenses vs Savings</div>
+          </div>
+        </div>
+        <div className="h-72 -ml-3">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={finance.byMonth}>
+              <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="month" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => v.slice(5)} />
+              <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} width={45} />
+              <Tooltip contentStyle={{ background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 12 }} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar dataKey="income" fill="#34d399" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="expense" fill="#fb7185" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="savings" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="invest" fill="#a78bfa" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      {/* Transactions */}
+      <Card className="border-border/60 overflow-hidden">
+        <div className="p-4 border-b border-border/40 flex items-center justify-between">
+          <div className="text-sm font-medium">Recent Transactions</div>
+          <div className="text-xs text-muted-foreground">{txns.length} entries</div>
+        </div>
+        <div className="divide-y divide-border/40 max-h-96 overflow-y-auto">
+          {txns.slice(0, 30).map((t) => (
+            <div key={t.id} className="p-3 flex items-center gap-3 text-sm hover:bg-white/[0.02]">
+              <div className="text-xs text-muted-foreground tabular-nums w-24">{t.date}</div>
+              <Badge variant="outline" className={
+                t.type === 'Income' ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30' :
+                t.type === 'Expense' ? 'bg-rose-500/15 text-rose-300 border-rose-500/30' :
+                t.type === 'Savings' ? 'bg-sky-500/15 text-sky-300 border-sky-500/30' :
+                'bg-violet-500/15 text-violet-300 border-violet-500/30'
+              }>{t.type}</Badge>
+              <div className="flex-1 truncate">{t.category}{t.notes ? ` — ${t.notes}` : ''}</div>
+              <div className={`tabular-nums font-medium ${t.type === 'Expense' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                {t.type === 'Expense' ? '-' : '+'}{money(t.amount)}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function HealthView({ dashboard, onRefresh }) {
+  const [form, setForm] = useState({ weight: '', sleep: '', water: '', steps: '', exercise: '', mood: 3, energy: 3 });
+  const [logs, setLogs] = useState([]);
+
+  const loadLogs = async () => {
+    const r = await fetch('/api/health-logs').then((r) => r.json());
+    setLogs(r);
+  };
+  useEffect(() => { loadLogs(); }, []);
+
+  const health = dashboard?.health;
+  if (!health) return <div className="text-muted-foreground">Loading health…</div>;
+
+  const submit = async () => {
+    const payload = {};
+    for (const k of Object.keys(form)) if (form[k] !== '' && form[k] !== null) payload[k] = form[k];
+    const res = await fetch('/api/health-logs', { method: 'POST', body: JSON.stringify(payload) });
+    if (res.ok) {
+      toast.success('Logged today\u2019s health');
+      setForm({ weight: '', sleep: '', water: '', steps: '', exercise: '', mood: 3, energy: 3 });
+      await loadLogs();
+      onRefresh();
+    }
+  };
+
+  const chartData = [...logs].reverse().slice(-14).map((r) => ({ day: r.date.slice(5), sleep: r.sleep, water: r.water, weight: r.weight }));
+  const a = health.averages || {};
+  const b = health.breakdown || {};
+
+  const metric = (label, value, unit, score, Icon) => (
+    <Card className="p-4 border-border/60">
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground flex items-center gap-1.5">
+          <Icon className="h-3 w-3" /> {label}
+        </div>
+        <div className={`text-[10px] tabular-nums ${scoreColor(score)}`}>{Math.round(score)}%</div>
+      </div>
+      <div className="text-2xl font-semibold tabular-nums mt-1">{value}<span className="text-xs text-muted-foreground ml-1">{unit}</span></div>
+      <div className="h-1 mt-2 rounded-full bg-white/5 overflow-hidden">
+        <div className={`h-full ${scoreBg(score)}`} style={{ width: `${Math.min(100, score)}%` }} />
+      </div>
+    </Card>
+  );
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Health & Energy</div>
+          <div className="text-2xl font-semibold">14-day averages</div>
+        </div>
+        <div className="text-right">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground">Composite</div>
+          <div className={`text-3xl font-bold tabular-nums ${scoreColor(health.healthScore)}`}>{health.healthScore}</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        {metric('Sleep', a.sleep, 'hrs', b.sleepScore || 0, Moon)}
+        {metric('Water', a.water, 'L', b.waterScore || 0, Droplet)}
+        {metric('Steps', a.steps, '', b.stepsScore || 0, Activity)}
+        {metric('Exercise', a.exercise, 'min', b.exerciseScore || 0, Flame)}
+        {metric('Mood', a.mood, '/5', b.moodScore || 0, Smile)}
+      </div>
+
+      <div className="grid lg:grid-cols-2 gap-6">
+        <Card className="p-6 border-border/60">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Sleep & Water Trend</div>
+          <div className="h-56 -ml-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData}>
+                <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="day" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} width={28} />
+                <Tooltip contentStyle={{ background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="sleep" stroke="#a78bfa" strokeWidth={2} dot={false} />
+                <Line type="monotone" dataKey="water" stroke="#38bdf8" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        <Card className="p-6 border-border/60">
+          <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-2">Weight Trend (kg)</div>
+          <div className="h-56 -ml-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="wg" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#fbbf24" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis dataKey="day" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} />
+                <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} domain={['dataMin - 1', 'dataMax + 1']} width={35} />
+                <Tooltip contentStyle={{ background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, fontSize: 12 }} />
+                <Area type="monotone" dataKey="weight" stroke="#fbbf24" strokeWidth={2} fill="url(#wg)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
+
+      <Card className="p-6 border-border/60">
+        <div className="text-[11px] uppercase tracking-widest text-muted-foreground mb-3">Log today</div>
+        <div className="grid grid-cols-2 lg:grid-cols-7 gap-3">
+          <div className="space-y-1"><Label className="text-xs">Weight (kg)</Label><Input type="number" step="0.1" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Sleep (h)</Label><Input type="number" step="0.1" value={form.sleep} onChange={(e) => setForm({ ...form, sleep: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Water (L)</Label><Input type="number" step="0.1" value={form.water} onChange={(e) => setForm({ ...form, water: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Steps</Label><Input type="number" value={form.steps} onChange={(e) => setForm({ ...form, steps: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Exercise (min)</Label><Input type="number" value={form.exercise} onChange={(e) => setForm({ ...form, exercise: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Mood 1-5</Label><Input type="number" min="1" max="5" value={form.mood} onChange={(e) => setForm({ ...form, mood: e.target.value })} /></div>
+          <div className="space-y-1"><Label className="text-xs">Energy 1-5</Label><Input type="number" min="1" max="5" value={form.energy} onChange={(e) => setForm({ ...form, energy: e.target.value })} /></div>
+        </div>
+        <div className="mt-4"><Button onClick={submit}>Save today's log</Button></div>
+      </Card>
+    </div>
+  );
+}
+
 function App() {
   const [view, setView] = useState('dashboard');
   const [dashboard, setDashboard] = useState(null);
@@ -788,6 +1073,8 @@ function App() {
                 {view === 'dashboard' && 'Executive Dashboard'}
                 {view === 'goals' && 'Goal Management'}
                 {view === 'habits' && 'Habit Tracker'}
+                {view === 'finance' && 'Finance'}
+                {view === 'health' && 'Health & Energy'}
                 {view === 'coach' && 'AI Coach'}
               </div>
             </div>
@@ -802,6 +1089,8 @@ function App() {
           {view === 'dashboard' && <Dashboard data={dashboard} brief={brief} briefLoading={briefLoading} onRefreshBrief={refreshBrief} onNav={setView} />}
           {view === 'goals' && <GoalsView goals={goals} onRefresh={refreshAll} />}
           {view === 'habits' && <HabitsView habits={habits} onRefresh={refreshAll} />}
+          {view === 'finance' && <FinanceView dashboard={dashboard} onRefresh={refreshAll} />}
+          {view === 'health' && <HealthView dashboard={dashboard} onRefresh={refreshAll} />}
           {view === 'coach' && <CoachView brief={brief} loading={briefLoading} onRefresh={refreshBrief} />}
         </div>
       </main>

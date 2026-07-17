@@ -29,12 +29,69 @@ function daysBetween(a, b) {
   return Math.round((new Date(b) - new Date(a)) / (1000 * 60 * 60 * 24));
 }
 
+// ---------- Finance & Health metric computation ----------
+function currentMonthKey(offset = 0) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + offset);
+  return d.toISOString().slice(0, 7);
+}
+
+async function computeFinanceMetrics(database) {
+  const txns = await database.collection('transactions').find({}).toArray();
+  const months = Array.from({ length: 6 }, (_, i) => currentMonthKey(-5 + i));
+  const byMonth = months.map((m) => {
+    const inMonth = txns.filter((t) => (t.date || '').slice(0, 7) === m);
+    const income = inMonth.filter((t) => t.type === 'Income').reduce((s, t) => s + Number(t.amount || 0), 0);
+    const expense = inMonth.filter((t) => t.type === 'Expense').reduce((s, t) => s + Number(t.amount || 0), 0);
+    const savings = inMonth.filter((t) => t.type === 'Savings').reduce((s, t) => s + Number(t.amount || 0), 0);
+    const invest = inMonth.filter((t) => t.type === 'Investment').reduce((s, t) => s + Number(t.amount || 0), 0);
+    const cashFlow = income - expense - savings - invest;
+    const savingsRate = income > 0 ? Math.round(((savings + invest) / income) * 100) : 0;
+    return { month: m, income, expense, savings, invest, cashFlow, savingsRate };
+  });
+  const current = byMonth[byMonth.length - 1];
+  const netWorthProxy = txns
+    .filter((t) => t.type === 'Savings' || t.type === 'Investment')
+    .reduce((s, t) => s + Number(t.amount || 0), 0);
+  // Finance score: savings rate target 30% -> 100
+  const financeScore = current
+    ? Math.max(0, Math.min(100, Math.round((current.savingsRate / 30) * 100)))
+    : null;
+  return { byMonth, current, netWorthProxy, financeScore };
+}
+
+async function computeHealthMetrics(database) {
+  const rows = await database.collection('health_logs').find({}).sort({ date: 1 }).toArray();
+  const last14 = rows.slice(-14);
+  if (!last14.length) return { last14: [], averages: null, healthScore: null };
+  const avg = (key) => Math.round((last14.reduce((s, r) => s + Number(r[key] || 0), 0) / last14.length) * 10) / 10;
+  const averages = {
+    sleep: avg('sleep'),
+    water: avg('water'),
+    steps: Math.round(avg('steps')),
+    exercise: Math.round(avg('exercise')),
+    mood: avg('mood'),
+    energy: avg('energy'),
+    weight: avg('weight'),
+  };
+  // score components (targets: sleep 7.5, water 3L, steps 8000, exercise 30min, mood 4)
+  const sleepScore = Math.min(100, (averages.sleep / 7.5) * 100);
+  const waterScore = Math.min(100, (averages.water / 3) * 100);
+  const stepsScore = Math.min(100, (averages.steps / 8000) * 100);
+  const exerciseScore = Math.min(100, (averages.exercise / 30) * 100);
+  const moodScore = Math.min(100, (averages.mood / 5) * 100);
+  const healthScore = Math.round((sleepScore + waterScore + stepsScore + exerciseScore + moodScore) / 5);
+  return { last14, averages, healthScore, breakdown: { sleepScore, waterScore, stepsScore, exerciseScore, moodScore } };
+}
+
 // ---------- Life Score computation ----------
 async function computeDashboard() {
   const database = await getDb();
   const goals = await database.collection('goals').find({}).toArray();
   const habits = await database.collection('habits').find({}).toArray();
   const logs = await database.collection('habit_logs').find({}).toArray();
+  const finance = await computeFinanceMetrics(database);
+  const health = await computeHealthMetrics(database);
 
   // Domain score from goals: avg (progress / max(expectedProgress,1)) * 100, capped 100
   const domainScore = (category) => {
@@ -66,8 +123,8 @@ async function computeDashboard() {
 
   const components = [
     { key: 'career', label: 'Career', weight: 0.22, score: domainScore('Career') ?? 60 },
-    { key: 'finance', label: 'Finance', weight: 0.22, score: domainScore('Finance') ?? 55 },
-    { key: 'health', label: 'Health & Energy', weight: 0.18, score: domainScore('Health') ?? 65 },
+    { key: 'finance', label: 'Finance', weight: 0.22, score: finance.financeScore ?? domainScore('Finance') ?? 55 },
+    { key: 'health', label: 'Health & Energy', weight: 0.18, score: health.healthScore ?? domainScore('Health') ?? 65 },
     { key: 'learning', label: 'Learning', weight: 0.13, score: domainScore('Learning') ?? 70 },
     { key: 'habits', label: 'Habits & Execution', weight: 0.15, score: habitScore ?? 50 },
     { key: 'relationships', label: 'Relationships', weight: 0.1, score: domainScore('Relationships') ?? 72 },
@@ -161,6 +218,8 @@ async function computeDashboard() {
     wins,
     weakestHabit,
     sparkline,
+    finance,
+    health,
     counts: {
       goals: goals.length,
       habits: habits.length,
@@ -217,7 +276,45 @@ async function seedIfEmpty() {
   }
   await database.collection('habit_logs').insertMany(logs);
 
-  return { seeded: true, goals: goals.length, habits: habits.length };
+  // ---- Finance seed: 6 months of transactions ----
+  const txns = [];
+  const catsIncome = ['Salary'];
+  const catsExpense = ['Rent', 'Food', 'Transport', 'Entertainment', 'Utilities'];
+  for (let m = 5; m >= 0; m--) {
+    const monthDate = new Date();
+    monthDate.setMonth(monthDate.getMonth() - m);
+    const yyyymm = monthDate.toISOString().slice(0, 7);
+    txns.push({ id: uuidv4(), date: `${yyyymm}-01`, type: 'Income', category: 'Salary', amount: 6500, account: 'Checking', notes: 'Monthly salary' });
+    for (const c of catsExpense) {
+      const amt = c === 'Rent' ? 1800 : c === 'Food' ? 550 + Math.random() * 150 : c === 'Utilities' ? 220 : 200 + Math.random() * 250;
+      txns.push({ id: uuidv4(), date: `${yyyymm}-05`, type: 'Expense', category: c, amount: Math.round(amt), account: 'Checking', notes: '' });
+    }
+    txns.push({ id: uuidv4(), date: `${yyyymm}-28`, type: 'Savings', category: 'Emergency Fund', amount: 800, account: 'Savings', notes: '' });
+    txns.push({ id: uuidv4(), date: `${yyyymm}-28`, type: 'Investment', category: 'Index ETF', amount: 1000, account: 'Brokerage', notes: '' });
+  }
+  await database.collection('transactions').insertMany(txns);
+
+  // ---- Health seed: 30 days of logs ----
+  const healthLogs = [];
+  let weight = 78.5;
+  for (let i = 29; i >= 0; i--) {
+    weight -= 0.03 + Math.random() * 0.05;
+    healthLogs.push({
+      id: uuidv4(),
+      date: todayStr(-i),
+      weight: Math.round(weight * 10) / 10,
+      sleep: Math.round((6.5 + Math.random() * 2) * 10) / 10,
+      water: Math.round((2 + Math.random() * 2) * 10) / 10,
+      steps: Math.round(5000 + Math.random() * 6000),
+      exercise: Math.round(15 + Math.random() * 45),
+      mood: Math.round(3 + Math.random() * 2),
+      energy: Math.round(3 + Math.random() * 2),
+      notes: '',
+    });
+  }
+  await database.collection('health_logs').insertMany(healthLogs);
+
+  return { seeded: true, goals: goals.length, habits: habits.length, transactions: txns.length, healthLogs: healthLogs.length };
 }
 
 // ---------- AI Brief ----------
@@ -231,6 +328,15 @@ async function generateBrief() {
     topDecisions: dashboard.decisions.slice(0, 5),
     weakestHabit: dashboard.weakestHabit,
     wins: dashboard.wins,
+    finance: dashboard.finance ? {
+      currentMonth: dashboard.finance.current,
+      savingsRate: dashboard.finance.current?.savingsRate,
+      netWorthProxy: dashboard.finance.netWorthProxy,
+    } : null,
+    health: dashboard.health ? {
+      averages: dashboard.health.averages,
+      healthScore: dashboard.health.healthScore,
+    } : null,
   };
 
   const prompt = `You are the Chief of Staff for a high-performing executive. Below is today's snapshot of their Personal Life Operating System. Generate a concise, executive-grade Morning Brief.
@@ -375,6 +481,23 @@ export async function GET(req) {
       );
       return NextResponse.json(brief);
     }
+    if (root === 'transactions') {
+      const list = await database.collection('transactions').find({}).sort({ date: -1 }).toArray();
+      return NextResponse.json(list.map(clean));
+    }
+    if (root === 'health-logs') {
+      const list = await database.collection('health_logs').find({}).sort({ date: -1 }).toArray();
+      return NextResponse.json(list.map(clean));
+    }
+    if (root === 'reseed') {
+      await database.collection('goals').deleteMany({});
+      await database.collection('habits').deleteMany({});
+      await database.collection('habit_logs').deleteMany({});
+      await database.collection('transactions').deleteMany({});
+      await database.collection('health_logs').deleteMany({});
+      const r = await seedIfEmpty();
+      return NextResponse.json(r);
+    }
 
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   } catch (e) {
@@ -448,6 +571,39 @@ export async function POST(req) {
         { upsert: true }
       );
       return NextResponse.json(brief);
+    }
+    if (root === 'transactions') {
+      const doc = {
+        id: uuidv4(),
+        date: body.date || todayStr(),
+        type: body.type || 'Expense',
+        category: body.category || 'Other',
+        amount: Number(body.amount || 0),
+        account: body.account || 'Checking',
+        notes: body.notes || '',
+      };
+      await database.collection('transactions').insertOne(doc);
+      return NextResponse.json(clean(doc));
+    }
+    if (root === 'health-logs') {
+      const date = body.date || todayStr();
+      const existing = await database.collection('health_logs').findOne({ date });
+      const payload = {
+        weight: Number(body.weight || existing?.weight || 0),
+        sleep: Number(body.sleep || existing?.sleep || 0),
+        water: Number(body.water || existing?.water || 0),
+        steps: Number(body.steps || existing?.steps || 0),
+        exercise: Number(body.exercise || existing?.exercise || 0),
+        mood: Number(body.mood || existing?.mood || 3),
+        energy: Number(body.energy || existing?.energy || 3),
+        notes: body.notes || existing?.notes || '',
+      };
+      if (existing) {
+        await database.collection('health_logs').updateOne({ date }, { $set: payload });
+        return NextResponse.json({ ok: true, updated: true });
+      }
+      await database.collection('health_logs').insertOne({ id: uuidv4(), date, ...payload });
+      return NextResponse.json({ ok: true, created: true });
     }
 
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
