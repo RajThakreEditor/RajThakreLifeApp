@@ -1,10 +1,8 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+LifeOS is a personal productivity dashboard built with Next.js.
 
 ## Getting Started
 
-Create `lifeos/.env.local` with your MongoDB Atlas connection details:
-
-Use Node.js 24 LTS for this project; the MongoDB Node.js driver 7.x compatibility table includes Node.js 24 and 22.
+Create `.env.local` with your MongoDB Atlas connection details:
 
 Use Node.js 24 LTS for this project; the MongoDB Node.js driver 7.x compatibility table includes Node.js 24 and 22.
 

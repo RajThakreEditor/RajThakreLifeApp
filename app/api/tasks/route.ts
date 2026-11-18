@@ -33,7 +33,7 @@ function databaseErrorMessage(error: unknown) {
   }
 
   if (/MONGODB_URI/i.test(message)) {
-    return "MONGODB_URI is missing from lifeos/.env.local.";
+    return "MONGODB_URI is missing from .env.local.";
   }
 
   if (/authentication failed|bad auth|not authorized/i.test(message)) {
@@ -41,7 +41,7 @@ function databaseErrorMessage(error: unknown) {
   }
 
   if (/querySrv ENOTFOUND|ENOTFOUND.*_mongodb\._tcp/i.test(message)) {
-    return "MongoDB Atlas cluster hostname could not be found. Copy the current connection URI from Atlas and update MONGODB_URI in lifeos/.env.local.";
+    return "MongoDB Atlas cluster hostname could not be found. Copy the current connection URI from Atlas and update MONGODB_URI in .env.local.";
   }
 
   return "Failed to create task in MongoDB";
